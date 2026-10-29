@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Debt Restructuring &amp; Liquidity Analysis</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body class="viz-root">
+<header class="app-header">
+  <div>
+    <h1>Debt Restructuring &amp; Liquidity Analysis</h1>
+    <p class="sub" id="company-line">Loading…</p>
+  </div>
+  <form id="company-form" class="company-form">
+    <label for="company-q" class="sr-only">Ticker or CIK</label>
+    <input id="company-q" name="q" value="{{ default_company }}" placeholder="Ticker or CIK" autocomplete="off">
+    <button type="submit">Load from EDGAR</button>
+  </form>
+</header>
+
+<div class="filter-row" role="group" aria-label="Filters">
+  <label>As of period
+    <select id="period-select"></select>
+  </label>
+  <label>Charts from
+    <select id="range-select"></select>
+  </label>
+  <span id="status" class="status" aria-live="polite"></span>
+</div>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+  <button role="tab" data-tab="liquidity">Liquidity</button>
+  <button role="tab" data-tab="leverage">Leverage &amp; Solvency</button>
+  <button role="tab" data-tab="lab">Restructuring Lab</button>
+  <button role="tab" data-tab="events">Filings &amp; Events</button>
+  <button role="tab" data-tab="data">Data</button>
+</nav>
+
+<main>
+  <!-- OVERVIEW -->
+  <section id="tab-overview" class="tab-panel">
+    <div id="kpis" class="kpi-row"></div>
+    <div class="grid-2">
+      <div class="card">
+        <h2>Distress signals <span class="muted" id="flags-period"></span></h2>
+        <ul id="flags" class="flags"></ul>
+      </div>
+      <div class="card">
+        <h2>Liquid assets vs. total debt</h2>
+        <p class="caption">Cash + short-term investments against funded debt + finance leases.</p>
+        <div id="ch-cash-debt" class="chart"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Capital structure</h2>
+      <p class="caption">Debt due within 12 months, long-term debt (incl. finance leases), and operating lease liabilities.</p>
+      <div id="ch-cap-structure" class="chart"></div>
+    </div>
+  </section>
+
+  <!-- LIQUIDITY -->
+  <section id="tab-liquidity" class="tab-panel" hidden>
+    <div class="grid-2">
+      <div class="card">
+        <h2>Current &amp; quick ratio</h2>
+        <p class="caption">Quick = (cash + short-term investments + receivables) / current liabilities. Reference line at 1.0×.</p>
+        <div id="ch-ratios" class="chart"></div>
+      </div>
+      <div class="card">
+        <h2>Quarterly free cash flow</h2>
+        <p class="caption">Operating cash flow − capex, de-accumulated from year-to-date 10-Q statements.</p>
+        <div id="ch-fcf" class="chart"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Shareholder returns vs. free cash flow (TTM)</h2>
+      <p class="caption">Buybacks + dividends funded beyond free cash flow come straight out of liquidity.</p>
+      <div id="ch-returns" class="chart"></div>
+    </div>
+  </section>
+
+  <!-- LEVERAGE -->
+  <section id="tab-leverage" class="tab-panel" hidden>
+    <div class="grid-2">
+      <div class="card">
+        <h2>EBITDA vs. interest (TTM)</h2>
+        <p class="caption">GAAP EBITDA = operating income + D&amp;A. Adjusted adds back impairments.</p>
+        <div id="ch-ebitda" class="chart"></div>
+      </div>
+      <div class="card">
+        <h2>Leverage multiples</h2>
+        <p class="caption">Gaps mean EBITDA was ≤ 0, so the multiple is undefined. Axis capped at 20×; the Data tab has exact values.</p>
+        <div id="ch-leverage" class="chart"></div>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <h2>Notes: carrying principal vs. fair value</h2>
+        <p class="caption">Fair value from the debt footnote. The ratio is the market price in cents on the dollar. Before 2020, principal ≈ non-current debt.</p>
+        <div id="ch-debt-fv" class="chart"></div>
+      </div>
+      <div class="card">
+        <h2>Altman Z'' score</h2>
+        <p class="caption">Non-manufacturing version. Below 1.1 = distress, 1.1–2.6 = grey, above 2.6 = safe.</p>
+        <div id="ch-z" class="chart"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LAB -->
+  <section id="tab-lab" class="tab-panel" hidden>
+    <p class="lab-intro">Inputs are pre-filled from the <strong id="lab-period"></strong> balance sheet. XBRL facts don't say which
+      tranche is secured, so <em>secured debt = funded debt − notes principal</em> is a heuristic. Check it against the debt footnote
+      and override any field. All amounts are in $ millions.</p>
+
+    <div class="card">
+      <h2>1 · Recovery waterfall (absolute priority)</h2>
+      <form id="wf-form" class="lab-form"></form>
+      <div class="grid-2 results">
+        <div><div id="ch-waterfall" class="chart"></div></div>
+        <div id="wf-result"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>2 · Distressed exchange / debt buyback</h2>
+      <form id="ex-form" class="lab-form"></form>
+      <div id="ex-result" class="results"></div>
+    </div>
+
+    <div class="card">
+      <h2>3 · Liquidity runway</h2>
+      <form id="rw-form" class="lab-form"></form>
+      <div class="grid-2 results">
+        <div><div id="ch-runway" class="chart"></div></div>
+        <div id="rw-result"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EVENTS -->
+  <section id="tab-events" class="tab-panel" hidden>
+    <div class="card">
+      <h2>Filing timeline</h2>
+      <p class="caption">8-K items tagged by restructuring relevance. Item 1.03 = bankruptcy, 2.04 = acceleration/default, 3.01 = delisting.</p>
+      <div class="chips" id="event-filters"></div>
+      <ol id="events" class="events"></ol>
+    </div>
+  </section>
+
+  <!-- DATA -->
+  <section id="tab-data" class="tab-panel" hidden>
+    <div class="card">
+      <h2>Quarterly panel <a id="csv-link" class="button-link" href="#">Download CSV</a></h2>
+      <p class="caption">USD millions unless noted. Flows are quarterly; "TTM" = trailing twelve months.</p>
+      <div class="table-wrap"><table id="data-table" class="data-table"></table></div>
+    </div>
+    <div class="card">
+      <h2>XBRL tags used</h2>
+      <p class="caption">Each line item tries an ordered list of us-gaap tags per period. These are the tags that actually supplied data.</p>
+      <div class="table-wrap"><table id="sources-table" class="data-table"></table></div>
+    </div>
+  </section>
+</main>
+
+<footer>Data: SEC EDGAR XBRL company facts &amp; submissions API. For analysis and education only, not investment advice.</footer>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
