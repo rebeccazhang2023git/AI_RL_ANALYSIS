@@ -83,6 +83,44 @@ class EdgarClient:
         raw = self._get_json(TICKER_MAP_URL, "company_tickers.json")
         return {row["ticker"].upper(): int(row["cik_str"]) for row in raw.values()}
 
+    def search_companies(self, query: str, limit: int = 10) -> list[dict]:
+        """Find companies by ticker, name or CIK.
+
+        Ranking: exact ticker, ticker prefix, name prefix, name substring.
+        Returns [{"ticker", "name", "cik"}].
+        """
+        q = query.strip().upper()
+        if not q:
+            return []
+        rows = [
+            {"ticker": r["ticker"].upper(), "name": r["title"], "cik": int(r["cik_str"])}
+            for r in self._get_json(TICKER_MAP_URL, "company_tickers.json").values()
+        ]
+        seen = {r["ticker"] for r in rows}
+        rows += [
+            {"ticker": t, "name": config.KNOWN_NAMES.get(t, t), "cik": c}
+            for t, c in config.KNOWN_TICKERS.items() if t not in seen
+        ]
+
+        def rank(r: dict) -> int | None:
+            name = r["name"].upper()
+            if q.isdigit():
+                c = str(r["cik"])
+                return 0 if c == q.lstrip("0") else 1 if c.startswith(q.lstrip("0") or q) else None
+            if r["ticker"] == q:
+                return 0
+            if r["ticker"].startswith(q):
+                return 1
+            if name.startswith(q):
+                return 2
+            if q in name:
+                return 3
+            return None
+
+        ranked = [(k, r["ticker"], r) for r in rows if (k := rank(r)) is not None]
+        ranked.sort(key=lambda t: (t[0], len(t[1]), t[1]))
+        return [r for _, _, r in ranked[:limit]]
+
     def resolve_cik(self, query: str) -> int:
         """Accept a CIK (digits) or ticker symbol."""
         q = query.strip().upper()
@@ -94,8 +132,12 @@ class EdgarClient:
             return config.KNOWN_TICKERS[q]
         cik = self.ticker_map().get(q)
         if cik is None:
+            # Fall back to name search so "apple" or "Tesla Inc" also work.
+            hits = self.search_companies(query, limit=1)
+            if hits:
+                return hits[0]["cik"]
             raise EdgarError(
-                f"Ticker '{q}' not found in SEC's current ticker list. "
+                f"No company matching '{query.strip()}' in SEC's current list. "
                 "Delisted companies must be looked up by CIK."
             )
         return cik

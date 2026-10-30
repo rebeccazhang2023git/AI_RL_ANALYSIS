@@ -60,7 +60,8 @@ body {
 h1 { font-size: 20px; margin: 0; }
 .sub { margin: 4px 0 0; color: var(--text-secondary); }
 .sub a { color: var(--accent); }
-.company-form { display: flex; gap: 8px; }
+.company-form { display: flex; gap: 8px; align-items: center; }
+.company-label { color: var(--text-secondary); white-space: nowrap; }
 input, select, button {
   font: inherit; color: var(--text-primary); background: var(--surface-1);
   border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;

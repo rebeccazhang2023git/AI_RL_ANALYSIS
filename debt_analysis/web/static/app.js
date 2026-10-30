@@ -456,8 +456,32 @@ function renderRunway(r) {
     : `<div class="callout">Liquidity stays positive through month ${r.months.at(-1)}. Ending balance <strong>${fmt.usd(end)}</strong>.</div>`;
 }
 
+// ---------------------------------------------------------------- company search
+let searchTimer = null, searchSeq = 0;
+function onCompanyInput(e) {
+  const q = e.target.value.trim();
+  clearTimeout(searchTimer);
+  if (q.length < 2) return;
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq;
+    try {
+      const { results } = await api(`/api/search?q=${encodeURIComponent(q)}`);
+      if (seq !== searchSeq) return; // stale response
+      const list = $("#company-suggestions");
+      list.replaceChildren(...results.map((r) => {
+        const o = document.createElement("option");
+        o.value = r.ticker;
+        o.label = `${r.name} (CIK ${r.cik})`;
+        o.textContent = o.label;
+        return o;
+      }));
+    } catch (_) { /* suggestions are best-effort */ }
+  }, 200);
+}
+
 // ---------------------------------------------------------------- wiring
 document.addEventListener("DOMContentLoaded", () => {
+  $("#company-q").addEventListener("input", onCompanyInput);
   $("#company-form").onsubmit = (e) => { e.preventDefault(); loadCompany($("#company-q").value.trim()); };
   $("#period-select").onchange = async (e) => {
     state.period = e.target.value;

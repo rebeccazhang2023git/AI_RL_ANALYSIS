@@ -41,6 +41,11 @@ def create_app(service: AnalysisService | None = None) -> Flask:
     def index():
         return render_template("index.html", default_company=config.DEFAULT_COMPANY)
 
+    @app.get("/api/search")
+    def search():
+        q = request.args.get("q", "")
+        return jsonify(results=svc.client.search_companies(q, limit=10))
+
     @app.get("/api/overview")
     def overview():
         return jsonify(svc.overview(company()))

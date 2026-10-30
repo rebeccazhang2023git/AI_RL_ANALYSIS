@@ -24,3 +24,6 @@ DEFAULT_COMPANY = "BBBY"
 KNOWN_TICKERS = {
     "BBBY": 886158,  # Bed Bath & Beyond Inc. (now "20230930-DK-Butterfly-1, Inc.")
 }
+KNOWN_NAMES = {
+    "BBBY": "Bed Bath & Beyond Inc.",
+}

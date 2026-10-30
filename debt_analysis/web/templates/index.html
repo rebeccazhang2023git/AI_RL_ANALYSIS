@@ -14,8 +14,9 @@
     <p class="sub" id="company-line">Loading…</p>
   </div>
   <form id="company-form" class="company-form">
-    <label for="company-q" class="sr-only">Ticker or CIK</label>
-    <input id="company-q" name="q" value="{{ default_company }}" placeholder="Ticker or CIK" autocomplete="off">
+    <label for="company-q" class="company-label">Company Name / CIK</label>
+    <input id="company-q" name="q" value="{{ default_company }}" placeholder="Search name, ticker or CIK" autocomplete="off" list="company-suggestions">
+    <datalist id="company-suggestions"></datalist>
     <button type="submit">Load from EDGAR</button>
   </form>
 </header>
