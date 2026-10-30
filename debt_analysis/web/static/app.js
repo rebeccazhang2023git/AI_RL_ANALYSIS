@@ -1,7 +1,7 @@
 /* Debt Restructuring & Liquidity Analysis: front end */
 "use strict";
 
-const state = { q: null, overview: null, snapshot: null, period: null, start: null, eventFilter: "key" };
+const state = { news: null, prices: null, symbol: "", overlay: false, q: null, overview: null, snapshot: null, period: null, start: null, eventFilter: "all" };
 const $ = (sel) => document.querySelector(sel);
 
 // ---------------------------------------------------------------- formatting
@@ -14,6 +14,8 @@ const fmt = {
   pct100: (v) => v == null ? "–" : `${v.toFixed(1)}%`,
   num: (v, d = 2) => v == null ? "–" : v.toFixed(d),
   months: (v) => v == null ? "n/a" : `${v.toFixed(1)} mo`,
+  px: (v) => v == null ? "–" : `$${v.toFixed(2)}`,
+  ret: (v) => v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v * 100).toFixed(1)}%`,
   cents: (v) => v == null ? "–" : `${v.toFixed(0)}¢`,
 };
 
@@ -28,6 +30,8 @@ const METRICS = {
   interest_expense_ttm: ["Interest expense (TTM)", "usd"], ebitda_margin_ttm: ["EBITDA margin (TTM)", "pct"],
   debt_to_ebitda: ["Debt / EBITDA", "x"], net_debt_to_ebitda: ["Net debt / EBITDA", "x"],
   lease_adj_leverage: ["Lease-adj. debt / EBITDAR", "x"], ebitda_interest_coverage: ["EBITDA / interest", "x"],
+  price_close: ["Stock price (quarter-end)", "px"], price_qtr_return: ["Stock return (quarter)", "ret"],
+  price_drawdown: ["Drawdown from peak", "ret"], distress_flag_count: ["Distress flags (count)", "num"],
   z_double_prime: ["Altman Z''", "num"], shareholder_returns_ttm: ["Buybacks + dividends (TTM)", "usd"],
 };
 
@@ -37,6 +41,7 @@ const TABLE_SECTIONS = [
   ["Earnings (TTM)", ["revenue_ttm", "ebitda_ttm", "adj_ebitda_ttm", "interest_expense_ttm", "ebitda_margin_ttm"]],
   ["Leverage & solvency", ["debt_to_ebitda", "net_debt_to_ebitda", "lease_adj_leverage", "ebitda_interest_coverage", "z_double_prime"]],
   ["Balance sheet", ["cash", "receivables", "inventory", "current_assets", "total_assets", "accounts_payable", "current_liabilities", "total_liabilities", "retained_earnings", "equity"]],
+  ["Stock price (Yahoo Finance)", ["price_close", "price_qtr_return", "price_drawdown"]],
   ["Cash flow (quarter)", ["ocf", "capex", "buybacks", "dividends", "debt_issued", "debt_repaid", "equity_issued"]],
 ];
 
@@ -73,11 +78,66 @@ async function loadCompany(q) {
     await loadSnapshot();
     renderEvents();
     setStatus(`Loaded ${state.overview.periods.length} quarterly periods.`);
+    loadPrices();
+    loadNews();
   } catch (e) {
     setStatus(e.message, true);
   } finally {
     $("main").classList.remove("loading");
   }
+}
+
+// Prices load after the EDGAR data so a slow/failed Yahoo call never blocks the analysis.
+async function loadPrices() {
+  const q = state.q;
+  state.prices = null;
+  const ov = state.overview;
+  ["price_close", "price_qtr_return", "price_drawdown"].forEach((c) => { ov.series[c] = ov.periods.map(() => null); });
+  renderPrices();
+  try {
+    const sym = state.symbol ? `&symbol=${encodeURIComponent(state.symbol)}` : "";
+    const res = await api(`/api/prices?q=${encodeURIComponent(q)}${sym}`);
+    if (q !== state.q) return; // company changed while loading
+    state.prices = res;
+    if (res.available) Object.assign(ov.series, res.quarterly);
+    $("#csv-link").href = `/api/export.csv?q=${encodeURIComponent(q)}${sym}`;
+  } catch (e) {
+    if (q !== state.q) return;
+    state.prices = { available: false, reason: e.message };
+  }
+  renderPrices();
+  renderTable();
+  if (state.snapshot) renderCharts();
+}
+
+const escapeHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function loadNews() {
+  const q = state.q;
+  state.news = null;
+  renderNews();
+  try {
+    const sym = state.symbol ? `&symbol=${encodeURIComponent(state.symbol)}` : "";
+    const res = await api(`/api/news?q=${encodeURIComponent(q)}${sym}`);
+    if (q !== state.q) return;
+    state.news = res;
+  } catch (e) {
+    if (q !== state.q) return;
+    state.news = { available: false, items: [], reason: e.message };
+  }
+  renderNews();
+}
+
+function renderNews() {
+  const n = state.news;
+  $("#news-meta").textContent = n && n.available ? `${n.symbol} · ${n.items.length} stories` : "";
+  $("#news-msg").textContent = n == null ? "Loading news from Yahoo Finance…" : !n.available ? n.reason : n.items.length ? "" : "No recent stories found.";
+  $("#news-msg").classList.toggle("error", n != null && !n.available);
+  const fmtTime = (iso) => new Date(iso).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  $("#news-list").innerHTML = n && n.available ? n.items.map((i) => `
+    <li><span class="date">${escapeHtml(fmtTime(i.published))}</span>
+      <div><a href="${escapeHtml(i.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(i.title)}</a>
+        <div class="muted">${escapeHtml(i.publisher || "")}${i.tickers.length > 1 ? " · " + escapeHtml(i.tickers.filter((t) => t !== n.symbol).slice(0, 4).join(", ")) : ""}</div></div></li>`).join("") : "";
 }
 
 async function loadSnapshot() {
@@ -97,6 +157,7 @@ function renderHeader() {
     `${c.name}${former} · CIK <a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${c.cik}" target="_blank" rel="noopener">${c.cik}</a>` +
     (c.sic ? ` · ${c.sic}` : "");
   $("#csv-link").href = `/api/export.csv?q=${encodeURIComponent(state.q)}`;
+  state.symbol = ""; $("#symbol-q").value = "";
 }
 
 function renderFilters(years) {
@@ -232,6 +293,24 @@ function barChart(id, groups, { names, unit = "usd" } = {}) {
   }), CONFIG);
 }
 
+const hasPrices = () => state.prices && state.prices.available;
+
+/** Dashed stock-price line on a secondary axis for an already-drawn time-series chart. */
+function addPriceOverlay(id) {
+  if (!state.overlay || !hasPrices()) return;
+  const { dates, close } = state.prices.daily;
+  const x = [], y = [];
+  dates.forEach((d, i) => { if (d.slice(0, 4) >= state.start) { x.push(d); y.push(close[i]); } });
+  Plotly.addTraces(id, [{
+    x, y, yaxis: "y2", name: `${state.prices.symbol} price`, type: "scatter", mode: "lines",
+    line: { color: css("--text-secondary"), width: 1.25, dash: "dot" }, hovertemplate: "$%{y:,.2f}<extra>Stock price</extra>",
+  }]);
+  Plotly.relayout(id, {
+    yaxis2: { overlaying: "y", side: "right", showgrid: false, tickprefix: "$", tickfont: { color: css("--text-muted") }, automargin: true },
+    "margin.r": 70, showlegend: true,
+  });
+}
+
 function renderCharts() {
   const ov = state.overview;
   // derived series for the capital-structure stack
@@ -273,6 +352,64 @@ function renderCharts() {
     extraShapes: [band(zmin - 1, 1.1, css("--critical"), "Distress"), band(1.1, 2.6, css("--warning"), "Grey"), band(2.6, zmax + 1, css("--good"), "Safe")],
     extra: { yaxis: { range: [zmin - 0.5, zmax + 0.5] } },
   });
+  ["ch-cash-debt", "ch-cap-structure", "ch-ratios", "ch-fcf", "ch-returns", "ch-ebitda", "ch-leverage", "ch-debt-fv", "ch-z"]
+    .forEach(addPriceOverlay);
+}
+
+// ---------------------------------------------------------------- stock price tab
+const REL_COLOR = () => ({ critical: css("--critical"), restructuring: css("--warning"), financing: css("--series-2") });
+
+function renderPrices() {
+  const p = state.prices;
+  const toggle = $("#overlay-toggle");
+  toggle.disabled = !hasPrices();
+  if (!hasPrices()) { state.overlay = false; toggle.checked = false; }
+  $("#price-meta").textContent = hasPrices() ? `${p.symbol} · ${p.first_date} to ${p.last_date}` : "";
+  $("#price-msg").textContent = p == null ? "Loading prices from Yahoo Finance…" : hasPrices() ? "" : p.reason;
+  $("#price-msg").classList.toggle("error", p != null && !hasPrices());
+  if (!hasPrices()) {
+    ["ch-price", "reaction-table", "corr-table"].forEach((id) => { $("#" + id).innerHTML = ""; });
+    if ($("#ch-price").data) Plotly.purge("ch-price");
+    return;
+  }
+
+  const { dates, close } = p.daily;
+  const keyEvents = p.events.filter((e) => REL_COLOR()[e.relevance] && e.price != null);
+  const traces = [{ x: dates, y: close, name: `${p.symbol} close`, type: "scatter", mode: "lines",
+    line: { color: css("--series-1"), width: 1.5 }, hovertemplate: "$%{y:,.2f}<extra></extra>" }];
+  for (const [rel, color] of Object.entries(REL_COLOR())) {
+    const ev = keyEvents.filter((e) => e.relevance === rel);
+    if (!ev.length) continue;
+    traces.push({
+      x: ev.map((e) => e.filed), y: ev.map((e) => e.price), name: rel, type: "scatter", mode: "markers",
+      marker: { color, size: 9, line: { color: css("--surface-1"), width: 1.5 } },
+      text: ev.map((e) => `${e.form}: ${e.items.map((t) => t.label).join("; ")}<br>Move: ${fmt.ret(e.move_1d)}`),
+      hovertemplate: "%{x}<br>%{text}<extra></extra>",
+    });
+  }
+  // drawdown panel
+  let peak = -Infinity;
+  const dd = close.map((v) => { peak = Math.max(peak, v); return (v / peak - 1) * 100; });
+  traces.push({ x: dates, y: dd, yaxis: "y2", name: "Drawdown", type: "scatter", mode: "lines", fill: "tozeroy",
+    line: { color: css("--critical"), width: 1 }, fillcolor: "rgba(200,60,60,0.15)", hovertemplate: "%{y:.1f}%<extra>Drawdown</extra>" });
+  Plotly.react("ch-price", traces, baseLayout({
+    hovermode: "closest", shapes: [], margin: { r: 30 },
+    xaxis: { anchor: "y2" },
+    yaxis: { domain: [0.34, 1], tickprefix: "$" },
+    yaxis2: { domain: [0, 0.26], ticksuffix: "%", gridcolor: css("--grid"), tickfont: { color: css("--text-muted") } },
+  }), CONFIG);
+
+  const REL_NAMES = { critical: "Critical (default, delisting, bankruptcy…)", restructuring: "Restructuring", financing: "Financing",
+    governance: "Governance", report: "10-K / 10-Q", info: "Other" };
+  $("#reaction-table").innerHTML = `<thead><tr><th style="text-align:left">Filing type</th><th>N</th><th>Avg move</th><th>Median</th><th>% negative</th></tr></thead><tbody>` +
+    p.event_summary.map((r) => `<tr><td style="text-align:left">${REL_NAMES[r.relevance] || r.relevance}</td><td>${r.n}</td>
+      <td class="${r.avg_move < 0 ? "neg" : ""}">${fmt.ret(r.avg_move)}</td><td class="${r.median_move < 0 ? "neg" : ""}">${fmt.ret(r.median_move)}</td>
+      <td>${(r.pct_negative * 100).toFixed(0)}%</td></tr>`).join("") + "</tbody>";
+
+  const c2 = (v) => v == null ? "–" : `<span class="${v < 0 ? "neg" : ""}">${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(2)}</span>`;
+  $("#corr-table").innerHTML = `<thead><tr><th style="text-align:left">Signal</th><th>Level → next qtr</th><th>Change → same qtr</th><th>N</th></tr></thead><tbody>` +
+    p.correlations.map((r) => `<tr><td style="text-align:left">${label(r.metric)}</td><td>${c2(r.level_vs_next)}</td><td>${c2(r.change_vs_same)}</td>
+      <td>${Math.max(r.n_level, r.n_change) || "–"}</td></tr>`).join("") + "</tbody>";
 }
 
 // ---------------------------------------------------------------- data table
@@ -482,6 +619,8 @@ function onCompanyInput(e) {
 // ---------------------------------------------------------------- wiring
 document.addEventListener("DOMContentLoaded", () => {
   $("#company-q").addEventListener("input", onCompanyInput);
+  $("#overlay-toggle").onchange = (e) => { state.overlay = e.target.checked; renderCharts(); };
+  $("#symbol-form").onsubmit = (e) => { e.preventDefault(); state.symbol = $("#symbol-q").value.trim(); if (state.overview) { loadPrices(); loadNews(); } };
   $("#company-form").onsubmit = (e) => { e.preventDefault(); loadCompany($("#company-q").value.trim()); };
   $("#period-select").onchange = async (e) => {
     state.period = e.target.value;

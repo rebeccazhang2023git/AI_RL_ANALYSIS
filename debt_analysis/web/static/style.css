@@ -158,3 +158,12 @@ main.loading { opacity: 0.55; transition: opacity 0.15s; }
 .tag.rel-financing { outline: 1px solid var(--axis); }
 
 footer { padding: 16px 28px 28px; color: var(--text-muted); font-size: 12px; }
+
+.check { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.check input { padding: 0; }
+.symbol-form { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; color: var(--text-secondary); flex-wrap: wrap; }
+.symbol-form input { width: 120px; }
+.chart.tall { min-height: 520px; }
+.pos { color: var(--good); }
+.events.news li { grid-template-columns: 170px 1fr; }
+@media (max-width: 600px) { .events.news li { grid-template-columns: 1fr; gap: 2px; } }

@@ -7,10 +7,14 @@ import threading
 from dataclasses import asdict
 
 import pandas as pd
+import requests
 
+from . import config
 from . import restructuring as rs
 from .edgar import EdgarClient, filing_url
 from .events import filing_timeline
+from .prices import (PriceClient, PriceError, check_overlap, event_reactions,
+                     price_correlations, quarterly_price_stats, summarize_reactions)
 from .financials import LABELS, add_ttm, build_quarterly_panel
 from .metrics import compute_metrics, distress_flags, z_zone
 
@@ -35,8 +39,9 @@ class CompanyAnalysis:
 
 
 class AnalysisService:
-    def __init__(self, client: EdgarClient | None = None):
+    def __init__(self, client: EdgarClient | None = None, prices: PriceClient | None = None):
         self.client = client or EdgarClient()
+        self.prices = prices or PriceClient()
         self._cache: dict[int, CompanyAnalysis] = {}
         self._lock = threading.Lock()
 
@@ -80,6 +85,80 @@ class AnalysisService:
             "events": filing_timeline(sub),
         })
 
+    def price_symbols(self, a: CompanyAnalysis, query: str) -> list[str]:
+        """Candidate Yahoo symbols: SEC-listed tickers, known aliases, then the query."""
+        known = [t for t, c in config.KNOWN_TICKERS.items() if c == a.cik]
+        q = query.strip().upper()
+        cands = [*a.submissions.get("tickers", []), *known, *([q] if q and not q.isdigit() else [])]
+        return list(dict.fromkeys(t.upper() for t in cands))
+
+    def prices_payload(self, query: str, symbol: str | None = None) -> dict:
+        """Stock price history joined to the quarterly panel. Never raises for
+        price problems: returns {"available": False, "reason": ...} instead."""
+        a = self.get(query)
+        cands = [symbol.strip().upper()] if symbol and symbol.strip() else self.price_symbols(a, query)
+        if not cands:
+            return {"available": False, "symbol": None,
+                    "reason": "No ticker is on file for this company. Enter a Yahoo Finance symbol."}
+        errors, close, used = [], None, None
+        for sym in cands:
+            try:
+                c = self.prices.history(sym)
+                check_overlap(c, a.panel.index[0], a.panel.index[-1])
+                close, used = c, sym
+                break
+            except PriceError as e:
+                errors.append(f"{sym}: {e}")
+            except requests.RequestException as e:
+                errors.append(f"{sym}: could not reach Yahoo Finance ({e})")
+        if close is None:
+            return {"available": False, "symbol": cands[0], "reason": " ".join(errors)}
+
+        stats = quarterly_price_stats(close, a.panel.index)
+        m = a.metrics.copy()
+        m["distress_flag_count"] = [len(distress_flags(a.panel, a.metrics, at)) for at in a.panel.index]
+        events = filing_timeline(a.submissions)
+        reactions = event_reactions(close, events)
+        for e, r in zip(events, reactions):
+            e.update(price=r["price"], move_1d=r["move_1d"])
+        start = a.panel.index[0] - pd.Timedelta(days=100)
+        daily = close.loc[start:]
+        return clean({
+            "available": True, "symbol": used, "reason": None,
+            "first_date": close.index[0].strftime("%Y-%m-%d"),
+            "last_date": close.index[-1].strftime("%Y-%m-%d"),
+            "daily": {"dates": daily.index.strftime("%Y-%m-%d").tolist(), "close": daily.tolist()},
+            "quarterly": {c: stats[c].tolist() for c in stats.columns},
+            "events": [e for e in events if e["move_1d"] is not None or e["price"] is not None],
+            "event_summary": summarize_reactions(events, reactions),
+            "correlations": price_correlations(stats, m),
+        })
+
+    def news_payload(self, query: str, symbol: str | None = None) -> dict:
+        """Recent market news. Only trusts tickers the SEC lists as current (or an
+        explicit override): a delisted company's old ticker may now be someone else's."""
+        a = self.get(query)
+        if symbol and symbol.strip():
+            cands = [symbol.strip().upper()]
+        else:
+            cands = [t.upper() for t in a.submissions.get("tickers", [])]
+        if not cands:
+            return {"available": False, "symbol": None, "items": [],
+                    "reason": "No current ticker is on file for this company (it may be delisted), "
+                              "so news can't be matched reliably. Enter a Yahoo Finance symbol on the Stock Price tab."}
+        errors = []
+        for sym in cands:
+            try:
+                items = self.prices.news(sym)
+            except PriceError as e:
+                errors.append(str(e))
+                continue
+            except requests.RequestException as e:
+                errors.append(f"Could not reach Yahoo Finance ({e})")
+                continue
+            return {"available": True, "symbol": sym, "items": items, "reason": None}
+        return {"available": False, "symbol": cands[0], "items": [], "reason": " ".join(errors)}
+
     def snapshot(self, query: str, period_end: str | None = None) -> dict:
         a = self.get(query)
         at = a.period(period_end)
@@ -113,9 +192,16 @@ class AnalysisService:
         base = rs.default_runway_inputs(*a.rows(a.period(period_end)))
         return clean(rs.run_runway(rs.RunwayInputs.from_dict(overrides, base)))
 
-    def csv(self, query: str) -> str:
+    def csv(self, query: str, symbol: str | None = None) -> str:
         a = self.get(query)
-        return pd.concat([a.panel, a.metrics], axis=1).to_csv()
+        frames = [a.panel, a.metrics]
+        try:
+            p = self.prices_payload(query, symbol)
+            if p["available"]:
+                frames.append(pd.DataFrame(p["quarterly"], index=a.panel.index))
+        except Exception:  # price columns are best-effort in the export
+            pass
+        return pd.concat(frames, axis=1).to_csv()
 
 
 def clean(obj):

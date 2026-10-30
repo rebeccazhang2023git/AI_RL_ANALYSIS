@@ -17,7 +17,7 @@
     <label for="company-q" class="company-label">Company Name / CIK</label>
     <input id="company-q" name="q" value="{{ default_company }}" placeholder="Search name, ticker or CIK" autocomplete="off" list="company-suggestions">
     <datalist id="company-suggestions"></datalist>
-    <button type="submit">Load from EDGAR</button>
+    <button type="submit">Load Data</button>
   </form>
 </header>
 
@@ -28,6 +28,7 @@
   <label>Charts from
     <select id="range-select"></select>
   </label>
+  <label class="check"><input type="checkbox" id="overlay-toggle" disabled> Overlay stock price</label>
   <span id="status" class="status" aria-live="polite"></span>
 </div>
 
@@ -36,6 +37,8 @@
   <button role="tab" data-tab="liquidity">Liquidity</button>
   <button role="tab" data-tab="leverage">Leverage &amp; Solvency</button>
   <button role="tab" data-tab="lab">Restructuring Lab</button>
+  <button role="tab" data-tab="price">Stock Price</button>
+  <button role="tab" data-tab="news">News</button>
   <button role="tab" data-tab="events">Filings &amp; Events</button>
   <button role="tab" data-tab="data">Data</button>
 </nav>
@@ -142,6 +145,46 @@
     </div>
   </section>
 
+  <!-- STOCK PRICE -->
+  <section id="tab-price" class="tab-panel" hidden>
+    <div class="card">
+      <h2>Stock price <span class="muted" id="price-meta"></span></h2>
+      <form id="symbol-form" class="symbol-form">
+        <label for="symbol-q">Yahoo Finance symbol</label>
+        <input id="symbol-q" placeholder="auto" autocomplete="off">
+        <button type="submit">Reload prices</button>
+      </form>
+      <p id="price-msg" class="caption"></p>
+      <p class="caption">Daily close (split-adjusted) with filings marked: critical, restructuring and financing events.
+        Hover a marker for the price move from the prior close to the next trading day's close. Lower panel: drawdown from the running peak.</p>
+      <div id="ch-price" class="chart tall"></div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <h2>Price reaction by filing type</h2>
+        <p class="caption">Move from the close before the filing to the close of the next trading day.</p>
+        <table id="reaction-table" class="data-table"></table>
+      </div>
+      <div class="card">
+        <h2>Do the distress signals lead the stock?</h2>
+        <p class="caption">Spearman rank correlation across quarters. <em>Level → next qtr</em>: the signal now vs. the next quarter's return.
+          <em>Change → same qtr</em>: the QoQ change vs. that quarter's return. Small samples and association only, not causation.</p>
+        <table id="corr-table" class="data-table"></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- NEWS -->
+  <section id="tab-news" class="tab-panel" hidden>
+    <div class="card">
+      <h2>Recent market news <span class="muted" id="news-meta"></span></h2>
+      <p class="caption">Headlines Yahoo Finance tags with this company's ticker, newest first. Cached for 15 minutes.
+        Third-party content: not reviewed or endorsed.</p>
+      <p id="news-msg" class="caption"></p>
+      <ol id="news-list" class="events news"></ol>
+    </div>
+  </section>
+
   <!-- EVENTS -->
   <section id="tab-events" class="tab-panel" hidden>
     <div class="card">
@@ -167,7 +210,7 @@
   </section>
 </main>
 
-<footer>Data: SEC EDGAR XBRL company facts &amp; submissions API. For analysis and education only, not investment advice.</footer>
+<footer>Data: SEC EDGAR XBRL company facts &amp; submissions API; stock prices from Yahoo Finance (unofficial). For analysis and education only, not investment advice.</footer>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

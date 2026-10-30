@@ -17,7 +17,7 @@ CACHE_TTL_HOURS = float(os.environ.get("EDGAR_CACHE_TTL_HOURS", "24"))
 # SEC fair-access limit is 10 requests/second; stay well under it.
 MIN_REQUEST_INTERVAL_S = 0.15
 
-DEFAULT_COMPANY = "BBBY"
+DEFAULT_COMPANY = "ORCL"
 
 # Delisted / renamed companies drop out of SEC's live ticker map, so keep
 # well-known restructuring case studies here.

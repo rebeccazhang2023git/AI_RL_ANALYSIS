@@ -50,6 +50,14 @@ def create_app(service: AnalysisService | None = None) -> Flask:
     def overview():
         return jsonify(svc.overview(company()))
 
+    @app.get("/api/prices")
+    def prices():
+        return jsonify(svc.prices_payload(company(), request.args.get("symbol")))
+
+    @app.get("/api/news")
+    def news():
+        return jsonify(svc.news_payload(company(), request.args.get("symbol")))
+
     @app.get("/api/snapshot")
     def snapshot():
         return jsonify(svc.snapshot(company(), period()))
@@ -69,7 +77,7 @@ def create_app(service: AnalysisService | None = None) -> Flask:
     @app.get("/api/export.csv")
     def export_csv():
         q = company()
-        return Response(svc.csv(q), mimetype="text/csv", headers={
+        return Response(svc.csv(q, request.args.get("symbol")), mimetype="text/csv", headers={
             "Content-Disposition": f"attachment; filename={q}_quarterly_panel.csv"})
 
     return app
